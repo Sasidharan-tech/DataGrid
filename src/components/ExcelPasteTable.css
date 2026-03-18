@@ -1,11 +1,13 @@
 .excel-table-tool {
-  max-width: 1100px;
-  margin: 2rem auto;
-  padding: 1rem;
+  max-width: 1200px;
+  margin: 1.5rem auto;
+  padding: 0;
   color: #1b1b1b;
   border: 1px solid #d1d5db;
   border-radius: 12px;
   background: #ffffff;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
 }
 
 .excel-table-tool:focus {
@@ -84,21 +86,141 @@
   background: #eff6ff;
 }
 
-.excel-table-tool__error {
-  margin: 0.8rem 1rem 1rem;
-  color: #b91c1c;
-  font-weight: 600;
+.btn--export {
+  background: #ffffff;
+  color: #15803d;
+  border-color: #86efac;
+}
+
+.btn--export:hover {
+  background: #f0fdf4;
+}
+
+.btn--import {
+  background: #ffffff;
+  color: #6d28d9;
+  border-color: #c4b5fd;
+  cursor: pointer;
+}
+
+.btn--import:hover {
+  background: #f5f3ff;
+}
+
+.btn--columns {
+  background: #ffffff;
+  color: #0f766e;
+  border-color: #99f6e4;
+}
+
+.btn--columns:hover {
+  background: #f0fdfa;
+}
+
+/* ── Toolbar ── */
+.excel-table-tool__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fafc;
 }
 
 .excel-table-tool__summary {
   display: flex;
-  gap: 1rem;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+  color: #374151;
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+.excel-table-tool__summary-selected {
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.excel-table-tool__summary-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.excel-table-tool__toolbar-actions {
+  display: flex;
+  gap: 0.45rem;
   flex-wrap: wrap;
   align-items: center;
-  padding: 0.85rem 1rem;
+}
+
+/* ── Column Visibility Panel ── */
+.excel-table-tool__column-panel {
   border-bottom: 1px solid #e5e7eb;
-  color: #14532d;
-  font-weight: 500;
+  background: #fafafa;
+  padding: 0.6rem 1rem;
+}
+
+.excel-table-tool__column-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: #374151;
+}
+
+.excel-table-tool__column-panel-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.excel-table-tool__column-panel-actions button {
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #374151;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+}
+
+.excel-table-tool__column-panel-actions button:hover {
+  background: #f3f4f6;
+}
+
+.excel-table-tool__column-panel-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+}
+
+.excel-table-tool__column-panel-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: #374151;
+  cursor: pointer;
+}
+
+.excel-table-tool__column-panel-item:hover {
+  color: #16a34a;
+}
+
+.excel-table-tool__error {
+  margin: 0.8rem 1rem 1rem;
+  color: #b91c1c;
+  font-weight: 600;
 }
 
 .excel-table-tool__filters {
@@ -453,6 +575,12 @@
   text-align: center;
 }
 
+.excel-table-tool__group-row-count {
+  font-weight: 400;
+  color: #166534;
+  margin-left: 0.25rem;
+}
+
 .excel-table-tool__group-row-icon {
   display: inline-block;
   color: #15803d;
@@ -483,7 +611,34 @@
   align-items: center;
   gap: 0.45rem;
   flex-wrap: wrap;
-  padding: 0.7rem 1rem 0.35rem;
+  padding: 0.6rem 1rem;
+  border-top: 1px solid #e5e7eb;
+  background: #f8fafc;
+}
+
+.excel-table-tool__page-size-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.84rem;
+  color: #374151;
+  font-weight: 500;
+  margin-right: 0.5rem;
+}
+
+.excel-table-tool__page-size-select {
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.82rem;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.excel-table-tool__page-ellipsis {
+  color: #9ca3af;
+  padding: 0 0.1rem;
+  font-size: 0.9rem;
 }
 
 .excel-table-tool__page-info {
@@ -580,11 +735,24 @@
 }
 
 @media (max-width: 840px) {
+  .excel-table-tool__toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
   .excel-table-tool__summary {
-    gap: 0.65rem;
+    gap: 0.4rem;
+  }
+
+  .excel-table-tool__toolbar-actions {
+    width: 100%;
   }
 
   .excel-table-tool__search-input {
     min-width: 100%;
+  }
+
+  .excel-table-tool__pagination {
+    gap: 0.3rem;
   }
 }

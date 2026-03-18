@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './ExcelPasteTable.css';
 import usePrimaryKeyPolicy from '../hooks/usePrimaryKeyPolicy';
 
@@ -21,9 +21,12 @@ const FILTER_OPERATORS = [
   { value: 'startsWith', label: 'starts with' },
   { value: 'endsWith', label: 'ends with' },
   { value: 'notEquals', label: 'not equals' },
+  { value: 'greaterThan', label: '> greater than' },
+  { value: 'lessThan', label: '< less than' },
 ];
 
-const ROWS_PER_PAGE = 10;
+const PAGE_SIZE_OPTIONS = [5, 10, 25, 50, 100];
+const DEFAULT_ROWS_PER_PAGE = 10;
 
 const createEmptyFilterConfig = () => ({
   condition1: { operator: 'contains', value: '' },
@@ -48,6 +51,18 @@ const matchesOperator = (cellValue, operator, query) => {
       return normalizedCell.endsWith(normalizedQuery);
     case 'notEquals':
       return normalizedCell !== normalizedQuery;
+    case 'greaterThan': {
+      const numCell = parseFloat(cellValue);
+      const numQuery = parseFloat(query);
+      if (!isNaN(numCell) && !isNaN(numQuery)) return numCell > numQuery;
+      return normalizedCell > normalizedQuery;
+    }
+    case 'lessThan': {
+      const numCell = parseFloat(cellValue);
+      const numQuery = parseFloat(query);
+      if (!isNaN(numCell) && !isNaN(numQuery)) return numCell < numQuery;
+      return normalizedCell < normalizedQuery;
+    }
     case 'contains':
     default:
       return normalizedCell.includes(normalizedQuery);
@@ -131,6 +146,7 @@ const ExcelPasteTable = () => {
   const [enforceNotNull, setEnforceNotNull] = useState(true);
   const [detectedDelimiter, setDetectedDelimiter] = useState('\t');
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [filterColumn, setFilterColumn] = useState('all');
   const [groupByColumns, setGroupByColumns] = useState([]);
   const [orderByColumn, setOrderByColumn] = useState('none');
@@ -143,12 +159,23 @@ const ExcelPasteTable = () => {
   const [isGroupDropActive, setIsGroupDropActive] = useState(false);
   const [visibleRowIndexes, setVisibleRowIndexes] = useState([]);
   const [currentPage, setCurrentPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
   const [selection, setSelection] = useState(null);
   const [isDraggingSelection, setIsDraggingSelection] = useState(false);
   const [editingCell, setEditingCell] = useState(null);
   const [editingValue, setEditingValue] = useState('');
   const [selectedRows, setSelectedRows] = useState({});
+  const [hiddenColumns, setHiddenColumns] = useState(new Set());
+  const [showColumnPanel, setShowColumnPanel] = useState(false);
+  const fileInputRef = useRef(null);
   const { blockedRows, clearBlockedRows, resetBlockedRows, validateRows } = usePrimaryKeyPolicy();
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   useEffect(() => {
     if (!rows.length) {
@@ -158,7 +185,7 @@ const ExcelPasteTable = () => {
 
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
-    const query = searchTerm.trim().toLowerCase();
+    const query = debouncedSearchTerm.trim().toLowerCase();
     let indexes = rows.map((_, index) => index);
 
     if (enforceNotNull && headers.length > 0) {
@@ -255,7 +282,7 @@ const ExcelPasteTable = () => {
     headers,
     primaryKeyIndex,
     enforceNotNull,
-    searchTerm,
+    debouncedSearchTerm,
     filterColumn,
     columnFilters,
     groupByColumns,
@@ -264,15 +291,15 @@ const ExcelPasteTable = () => {
   ]);
 
   useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(visibleRowIndexes.length / ROWS_PER_PAGE));
+    const totalPages = Math.max(1, Math.ceil(visibleRowIndexes.length / rowsPerPage));
     if (currentPage > totalPages) {
       setCurrentPage(totalPages);
     }
-  }, [visibleRowIndexes, currentPage]);
+  }, [visibleRowIndexes, currentPage, rowsPerPage]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, filterColumn, columnFilters, groupByColumns, orderByColumn, orderDirection]);
+  }, [debouncedSearchTerm, filterColumn, columnFilters, groupByColumns, orderByColumn, orderDirection, rowsPerPage]);
 
   const normalizeSelection = (currentSelection) => {
     if (!currentSelection) return null;
@@ -801,6 +828,7 @@ const ExcelPasteTable = () => {
     setEditingCell(null);
     resetBlockedRows();
     setSearchTerm('');
+    setDebouncedSearchTerm('');
     setFilterColumn('all');
     setGroupByColumns([]);
     setOrderByColumn('none');
@@ -809,13 +837,81 @@ const ExcelPasteTable = () => {
     setColumnFilters({});
     setMenuColumnIndex(null);
     setMenuDraft(createEmptyFilterConfig());
+    setHiddenColumns(new Set());
+    setRowsPerPage(DEFAULT_ROWS_PER_PAGE);
   };
+
+  const exportToCSV = useCallback(() => {
+    const visibleHeaderIndexes = headers
+      .map((_, index) => index)
+      .filter((index) => !hiddenColumns.has(index));
+
+    const headerLine = visibleHeaderIndexes
+      .map((index) => {
+        const cell = String(headers[index] ?? '');
+        return cell.includes(',') || cell.includes('"') || cell.includes('\n')
+          ? `"${cell.replace(/"/g, '""')}"`
+          : cell;
+      })
+      .join(',');
+
+    const dataLines = visibleRowIndexes.map((rowIndex) => {
+      const row = rows[rowIndex] || [];
+      return visibleHeaderIndexes
+        .map((colIndex) => {
+          const cell = String(row[colIndex] ?? '');
+          return cell.includes(',') || cell.includes('"') || cell.includes('\n')
+            ? `"${cell.replace(/"/g, '""')}"`
+            : cell;
+        })
+        .join(',');
+    });
+
+    const csvContent = [headerLine, ...dataLines].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'datagrid-export.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [headers, rows, visibleRowIndexes, hiddenColumns]);
+
+  const handleFileImport = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result;
+      if (typeof text === 'string') {
+        applyParsedData(text);
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = '';
+  };
+
+  const toggleColumnVisibility = (columnIndex) => {
+    setHiddenColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(columnIndex)) {
+        next.delete(columnIndex);
+      } else {
+        next.add(columnIndex);
+      }
+      return next;
+    });
+  };
+
+  const showAllColumns = () => setHiddenColumns(new Set());
+  const hideAllColumns = () => setHiddenColumns(new Set(headers.map((_, i) => i)));
 
   const selectedRowCount = Object.values(selectedRows).filter(Boolean).length;
   const areAllRowsSelected = rows.length > 0 && selectedRowCount === rows.length;
-  const totalPages = Math.max(1, Math.ceil(visibleRowIndexes.length / ROWS_PER_PAGE));
-  const pageStart = (currentPage - 1) * ROWS_PER_PAGE;
-  const pageEnd = pageStart + ROWS_PER_PAGE;
+  const totalPages = Math.max(1, Math.ceil(visibleRowIndexes.length / rowsPerPage));
+  const pageStart = (currentPage - 1) * rowsPerPage;
+  const pageEnd = pageStart + rowsPerPage;
   const paginatedRowIndexes = visibleRowIndexes.slice(pageStart, pageEnd);
   const groupedPageItems = useMemo(() => {
     if (groupByColumns.length === 0) {
@@ -884,7 +980,124 @@ const ExcelPasteTable = () => {
       tabIndex={0}
       aria-label="Paste-enabled table"
     >
-      
+      {/* ── Toolbar ── */}
+      <div className="excel-table-tool__toolbar">
+        <div className="excel-table-tool__summary">
+          <span>{rows.length} rows</span>
+          <span>·</span>
+          <span>{headers.length} columns</span>
+          {selectedRowCount > 0 && (
+            <>
+              <span>·</span>
+              <span className="excel-table-tool__summary-selected">{selectedRowCount} selected</span>
+            </>
+          )}
+          {Object.keys(columnFilters).length > 0 && (
+            <span className="excel-table-tool__summary-badge">
+              {Object.keys(columnFilters).length} filter{Object.keys(columnFilters).length !== 1 ? 's' : ''} active
+            </span>
+          )}
+        </div>
+        <div className="excel-table-tool__toolbar-actions">
+          <button
+            type="button"
+            className="btn btn--add"
+            onClick={handleAddRow}
+            title="Add a new empty row"
+          >
+            + Row
+          </button>
+          <button
+            type="button"
+            className="btn btn--add"
+            onClick={handleAddColumn}
+            title="Add a new empty column"
+          >
+            + Col
+          </button>
+          <button
+            type="button"
+            className="btn btn--remove"
+            onClick={deleteSelectedRows}
+            disabled={selectedRowCount === 0}
+            title="Delete selected rows"
+          >
+            Delete Selected
+          </button>
+          <button
+            type="button"
+            className="btn btn--copy"
+            onClick={copySelectedCellsToClipboard}
+            disabled={!selectedRange}
+            title="Copy selected cells to clipboard"
+          >
+            Copy
+          </button>
+          <button
+            type="button"
+            className="btn btn--export"
+            onClick={exportToCSV}
+            disabled={rows.length === 0}
+            title="Export visible data to CSV"
+          >
+            Export CSV
+          </button>
+          <label className="btn btn--import" title="Import CSV or TXT file">
+            Import File
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.txt,.tsv"
+              className="excel-table-tool__sr-only"
+              onChange={handleFileImport}
+            />
+          </label>
+          <button
+            type="button"
+            className="btn btn--columns"
+            onClick={() => setShowColumnPanel((v) => !v)}
+            title="Show/hide columns"
+          >
+            Columns ▾
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={handleClear}
+            title="Reset to demo data"
+          >
+            Reset
+          </button>
+        </div>
+      </div>
+
+      {/* ── Column Visibility Panel ── */}
+      {showColumnPanel && headers.length > 0 && (
+        <div className="excel-table-tool__column-panel">
+          <div className="excel-table-tool__column-panel-header">
+            <span>Column Visibility</span>
+            <div className="excel-table-tool__column-panel-actions">
+              <button type="button" onClick={showAllColumns}>Show all</button>
+              <button type="button" onClick={hideAllColumns}>Hide all</button>
+              <button type="button" onClick={() => setShowColumnPanel(false)}>✕</button>
+            </div>
+          </div>
+          <div className="excel-table-tool__column-panel-list">
+            {headers.map((header, index) => (
+              <label key={`vis-${index}`} className="excel-table-tool__column-panel-item">
+                <input
+                  type="checkbox"
+                  checked={!hiddenColumns.has(index)}
+                  onChange={() => toggleColumnVisibility(index)}
+                />
+                {header || `Column ${index + 1}`}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Filters Bar ── */}
       <div className="excel-table-tool__filters">
         <div
           className={`excel-table-tool__group-dropzone ${isGroupDropActive ? 'is-active' : ''}`}
@@ -1017,6 +1230,7 @@ const ExcelPasteTable = () => {
         </span>
       </div>
 
+      {/* ── Table ── */}
       <div className="excel-table-tool__table-wrapper">
         <table className="excel-table-tool__table">
           {headers.length > 0 && (
@@ -1030,45 +1244,48 @@ const ExcelPasteTable = () => {
                     aria-label="Select all rows"
                   />
                 </th>
-                {headers.map((header, index) => (
-                  <th
-                    key={`${index}-${header}`}
-                    draggable
-                    onDragStart={() => handleHeaderDragStart(index)}
-                    onDragEnd={handleHeaderDragEnd}
-                  >
-                    <div className="excel-table-tool__header-cell">
-                      <span className="excel-table-tool__drag-handle" title="Drag to Group By">
-                        ⋮⋮
-                      </span>
-                      <input
-                        type="text"
-                        className="excel-table-tool__header-input"
-                        value={header}
-                        onChange={(event) => updateHeaderCell(index, event.target.value)}
-                        aria-label={`Header ${index + 1}`}
-                      />
-                      <button
-                        type="button"
-                        className="excel-table-tool__icon-btn"
-                        onClick={() => handleRemoveColumn(index)}
-                        aria-label={`Remove column ${index + 1}`}
-                        title="Remove column"
-                      >
-                        ×
-                      </button>
-                      <button
-                        type="button"
-                        className="excel-table-tool__menu-btn"
-                        onClick={(event) => openColumnMenu(index, event.currentTarget)}
-                        aria-label={`Open menu for ${header || `Column ${index + 1}`}`}
-                        title="Column menu"
-                      >
-                        ☰
-                      </button>
-                    </div>
-                  </th>
-                ))}
+                {headers.map((header, index) => {
+                  if (hiddenColumns.has(index)) return null;
+                  return (
+                    <th
+                      key={`${index}-${header}`}
+                      draggable
+                      onDragStart={() => handleHeaderDragStart(index)}
+                      onDragEnd={handleHeaderDragEnd}
+                    >
+                      <div className="excel-table-tool__header-cell">
+                        <span className="excel-table-tool__drag-handle" title="Drag to Group By">
+                          ⋮⋮
+                        </span>
+                        <input
+                          type="text"
+                          className="excel-table-tool__header-input"
+                          value={header}
+                          onChange={(event) => updateHeaderCell(index, event.target.value)}
+                          aria-label={`Header ${index + 1}`}
+                        />
+                        <button
+                          type="button"
+                          className="excel-table-tool__icon-btn"
+                          onClick={() => handleRemoveColumn(index)}
+                          aria-label={`Remove column ${index + 1}`}
+                          title="Remove column"
+                        >
+                          ×
+                        </button>
+                        <button
+                          type="button"
+                          className="excel-table-tool__menu-btn"
+                          onClick={(event) => openColumnMenu(index, event.currentTarget)}
+                          aria-label={`Open menu for ${header || `Column ${index + 1}`}`}
+                          title="Column menu"
+                        >
+                          ☰
+                        </button>
+                      </div>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
           )}
@@ -1076,7 +1293,7 @@ const ExcelPasteTable = () => {
             {headers.length === 0 ? (
               <tr>
                 <td className="excel-table-tool__empty-cell">
-                  Click this table and paste Excel data (Ctrl+V)
+                  Click this table and paste Excel data (Ctrl+V), or use Import File above
                 </td>
               </tr>
             ) : rows.length === 0 ? (
@@ -1092,9 +1309,21 @@ const ExcelPasteTable = () => {
                 </td>
               </tr>
             ) : (
-              groupedPageItems.map((item, itemIndex) => {
+              groupedPageItems.map((item) => {
                 if (item.type === 'group') {
-                  return null;
+                  const colSpan = headers.length - hiddenColumns.size + 1;
+                  return (
+                    <tr
+                      key={item.key}
+                      className={`excel-table-tool__group-row excel-table-tool__group-row-level-${Math.min(item.level + 1, 3)}`}
+                    >
+                      <td colSpan={colSpan}>
+                        <span className="excel-table-tool__group-row-icon" aria-hidden="true">▶</span>
+                        <strong>{item.columnLabel}</strong>: {item.value}
+                        <span className="excel-table-tool__group-row-count"> ({item.count})</span>
+                      </td>
+                    </tr>
+                  );
                 }
 
                 const rowIndex = item.rowIndex;
@@ -1106,11 +1335,6 @@ const ExcelPasteTable = () => {
                     className={selectedRows[rowIndex] ? 'excel-table-tool__row-selected' : ''}
                   >
                     <td className="excel-table-tool__row-select-col">
-                      {groupByColumns.length > 0 && (
-                        <span className="excel-table-tool__group-row-icon" title="Grouped row" aria-hidden="true">
-                          ◈
-                        </span>
-                      )}
                       <input
                         type="checkbox"
                         checked={!!selectedRows[rowIndex]}
@@ -1118,41 +1342,44 @@ const ExcelPasteTable = () => {
                         aria-label={`Select row ${rowIndex + 1}`}
                       />
                     </td>
-                    {row.map((cell, cellIndex) => (
-                      <td
-                        key={`cell-${rowIndex}-${cellIndex}`}
-                        className={isCellSelected(rowIndex, cellIndex) ? 'excel-table-tool__cell-selected' : ''}
-                        onMouseDown={() => startSelection(rowIndex, cellIndex)}
-                        onMouseEnter={() => extendSelection(rowIndex, cellIndex)}
-                        onDoubleClick={() => {
-                          setEditingCell({ row: rowIndex, col: cellIndex });
-                          setEditingValue(cell);
-                        }}
-                      >
-                        {editingCell?.row === rowIndex && editingCell?.col === cellIndex ? (
-                          <input
-                            type="text"
-                            className="excel-table-tool__cell-input"
-                            value={editingValue}
-                            onChange={(event) => setEditingValue(event.target.value)}
-                            onBlur={commitEditCell}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter') {
-                                commitEditCell();
-                              }
+                    {row.map((cell, cellIndex) => {
+                      if (hiddenColumns.has(cellIndex)) return null;
+                      return (
+                        <td
+                          key={`cell-${rowIndex}-${cellIndex}`}
+                          className={isCellSelected(rowIndex, cellIndex) ? 'excel-table-tool__cell-selected' : ''}
+                          onMouseDown={() => startSelection(rowIndex, cellIndex)}
+                          onMouseEnter={() => extendSelection(rowIndex, cellIndex)}
+                          onDoubleClick={() => {
+                            setEditingCell({ row: rowIndex, col: cellIndex });
+                            setEditingValue(cell);
+                          }}
+                        >
+                          {editingCell?.row === rowIndex && editingCell?.col === cellIndex ? (
+                            <input
+                              type="text"
+                              className="excel-table-tool__cell-input"
+                              value={editingValue}
+                              onChange={(event) => setEditingValue(event.target.value)}
+                              onBlur={commitEditCell}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  commitEditCell();
+                                }
 
-                              if (event.key === 'Escape') {
-                                cancelEditCell();
-                              }
-                            }}
-                            autoFocus
-                            aria-label={`Row ${rowIndex + 1} Column ${cellIndex + 1}`}
-                          />
-                        ) : (
-                          <span className="excel-table-tool__cell-value">{cell}</span>
-                        )}
-                      </td>
-                    ))}
+                                if (event.key === 'Escape') {
+                                  cancelEditCell();
+                                }
+                              }}
+                              autoFocus
+                              aria-label={`Row ${rowIndex + 1} Column ${cellIndex + 1}`}
+                            />
+                          ) : (
+                            <span className="excel-table-tool__cell-value">{cell}</span>
+                          )}
+                        </td>
+                      );
+                    })}
                   </tr>
                 );
               })
@@ -1161,6 +1388,7 @@ const ExcelPasteTable = () => {
         </table>
       </div>
 
+      {/* ── Column Filter Menu ── */}
       {menuColumnIndex !== null && (
         <div
           className="excel-table-tool__column-menu"
@@ -1278,8 +1506,23 @@ const ExcelPasteTable = () => {
         </div>
       )}
 
+      {/* ── Pagination ── */}
       {visibleRowIndexes.length > 0 && (
         <div className="excel-table-tool__pagination">
+          <label className="excel-table-tool__page-size-label">
+            Rows per page:
+            <select
+              className="excel-table-tool__page-size-select"
+              value={rowsPerPage}
+              onChange={(event) => setRowsPerPage(Number(event.target.value))}
+              aria-label="Rows per page"
+            >
+              {PAGE_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>{size}</option>
+              ))}
+            </select>
+          </label>
+
           <button
             type="button"
             className="excel-table-tool__page-btn"
@@ -1293,18 +1536,35 @@ const ExcelPasteTable = () => {
             Page {currentPage} of {totalPages}
           </span>
 
-          {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (
-            <button
-              key={`page-${pageNumber}`}
-              type="button"
-              className={`excel-table-tool__page-btn ${
-                pageNumber === currentPage ? 'is-active' : ''
-              }`}
-              onClick={() => setCurrentPage(pageNumber)}
-            >
-              {pageNumber}
-            </button>
-          ))}
+          {Array.from({ length: totalPages }, (_, index) => index + 1)
+            .filter((pageNumber) => {
+              if (totalPages <= 7) return true;
+              if (pageNumber === 1 || pageNumber === totalPages) return true;
+              return Math.abs(pageNumber - currentPage) <= 2;
+            })
+            .reduce((acc, pageNumber, idx, arr) => {
+              if (idx > 0 && pageNumber - arr[idx - 1] > 1) {
+                acc.push({ ellipsis: true, key: `ellipsis-${pageNumber}` });
+              }
+              acc.push({ pageNumber, key: `page-${pageNumber}` });
+              return acc;
+            }, [])
+            .map((item) =>
+              item.ellipsis ? (
+                <span key={item.key} className="excel-table-tool__page-ellipsis">…</span>
+              ) : (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`excel-table-tool__page-btn ${
+                    item.pageNumber === currentPage ? 'is-active' : ''
+                  }`}
+                  onClick={() => setCurrentPage(item.pageNumber)}
+                >
+                  {item.pageNumber}
+                </button>
+              )
+            )}
 
           <button
             type="button"
@@ -1317,8 +1577,7 @@ const ExcelPasteTable = () => {
         </div>
       )}
 
- 
-
+      {/* ── Primary Key Violations Log ── */}
       {blockedRows.length > 0 && (
         <section className="excel-table-tool__duplicates">
           <div className="excel-table-tool__duplicates-header">

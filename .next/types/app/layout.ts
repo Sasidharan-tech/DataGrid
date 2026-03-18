@@ -1,4 +1,4 @@
-// File: D:\codeAI\DataGrid\app\layout.jsx
+// File: /home/runner/work/DataGrid/DataGrid/app/layout.jsx
 import * as entry from '../../../app/layout.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 
